@@ -1,3 +1,11 @@
+import os
+
+from io import BytesIO
+from uuid import uuid4
+
+from PIL import Image, ImageOps, UnidentifiedImageError
+from pillow_heif import register_heif_opener
+
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, status, File, UploadFile
@@ -16,6 +24,22 @@ app = FastAPI(
     title="Smart Water API",
     version="0.2.0",
 )
+
+register_heif_opener()
+
+IMAGE_DIRECTORY = Path(
+    os.getenv(
+        "SMART_WATER_IMAGE_DIR",
+        "./data/images",
+    )
+)
+
+IMAGE_DIRECTORY.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+MAX_IMAGE_SIZE = 8 * 1024 * 1024
 
 
 @app.get("/health")
@@ -133,16 +157,84 @@ def create_plant(
     return plant_response(plant)
 
 
-@app.put("/api/plants/{plant_id}/photo")
+@app.put(
+    "/api/plants/{plant_id}/photo",
+    response_model=PlantResponse,
+)
 async def update_plant_photo(
     plant_id: str,
     photo: UploadFile = File(...),
+    db: Session = Depends(get_db),
 ):
-    return {
-        "plant_id": plant_id,
-        "filename": photo.filename,
-        "content_type": photo.content_type,
+    plant = db.get(Plant, plant_id)
+
+    if not plant:
+        raise HTTPException(
+            status_code=404,
+            detail="Plant not found",
+        )
+
+    allowed_types = {
+        "image/jpeg",
+        "image/png",
+        "image/heic",
+        "image/heif",
     }
+
+    if photo.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Photo must be JPEG, PNG, HEIC, or HEIF",
+        )
+
+    contents = await photo.read(MAX_IMAGE_SIZE + 1)
+
+    if len(contents) > MAX_IMAGE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="Photo must be 8 MB or smaller",
+        )
+
+    new_filename = f"{uuid4()}.jpg"
+    new_path = IMAGE_DIRECTORY / new_filename
+
+    try:
+        with Image.open(BytesIO(contents)) as source:
+            image = ImageOps.exif_transpose(source)
+            image = image.convert("RGB")
+
+            image.thumbnail((1600, 1600))
+
+            image.save(
+                new_path,
+                format="JPEG",
+                quality=85,
+                optimize=True,
+            )
+    except (UnidentifiedImageError, OSError, ValueError) as error:
+        new_path.unlink(missing_ok=True)
+
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="The uploaded photo could not be decoded",
+        ) from error
+
+    old_filename = plant.photo_filename
+    plant.photo_filename = new_filename
+
+    try:
+        db.commit()
+        db.refresh(plant)
+    except Exception:
+        db.rollback()
+        new_path.unlink(missing_ok=True)
+        raise
+
+    if old_filename:
+        old_path = IMAGE_DIRECTORY / old_filename
+        old_path.unlink(missing_ok=True)
+
+    return plant_response(plant)
 
 
 @app.get("/api/plants", response_model=list[PlantResponse])
