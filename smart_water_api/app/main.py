@@ -17,6 +17,8 @@ from app.models import Plant, Room
 from app.schemas import RoomCreate, RoomResponse
 from app.schemas import PlantCreate, PlantResponse
 
+from fastapi.responses import FileResponse
+
 Path("data").mkdir(exist_ok=True)
 Base.metadata.create_all(bind=engine)
 
@@ -235,6 +237,53 @@ async def update_plant_photo(
         old_path.unlink(missing_ok=True)
 
     return plant_response(plant)
+
+
+@app.get(
+    "/api/plants/{plant_id}/photo",
+    response_class=FileResponse,
+)
+def get_plant_photo(
+    plant_id: str,
+    db: Session = Depends(get_db),
+):
+    plant = db.get(Plant, plant_id)
+
+    if not plant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Plant not found",
+        )
+
+    if not plant.photo_filename:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Plant does not have a photo",
+        )
+
+    photo_path = (IMAGE_DIRECTORY / plant.photo_filename).resolve()
+
+    image_directory = IMAGE_DIRECTORY.resolve()
+
+    if image_directory not in photo_path.parents:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid photo path",
+        )
+
+    if not photo_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Photo file was not found",
+        )
+
+    return FileResponse(
+        path=photo_path,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-cache",
+        },
+    )
 
 
 @app.get("/api/plants", response_model=list[PlantResponse])
