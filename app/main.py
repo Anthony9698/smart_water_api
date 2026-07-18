@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status, File, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -131,6 +131,18 @@ def create_plant(
     db.refresh(plant)
 
     return plant_response(plant)
+
+
+@app.put("/api/plants/{plant_id}/photo")
+async def update_plant_photo(
+    plant_id: str,
+    photo: UploadFile = File(...),
+):
+    return {
+        "plant_id": plant_id,
+        "filename": photo.filename,
+        "content_type": photo.content_type,
+    }
 
 
 @app.get("/api/plants", response_model=list[PlantResponse])
