@@ -36,7 +36,10 @@ class Plant(Base):
     )
 
     name: Mapped[str] = mapped_column(String(100))
-    species: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    species: Mapped[str | None] = mapped_column(
+        String(150),
+        nullable=True,
+    )
 
     room_id: Mapped[str] = mapped_column(
         ForeignKey("rooms.id"),
@@ -45,11 +48,13 @@ class Plant(Base):
     moisture_entity_id: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
+        unique=True,
     )
 
     pump_entity_id: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
+        unique=True,
     )
 
     photo_filename: Mapped[str | None] = mapped_column(
@@ -57,4 +62,6 @@ class Plant(Base):
         nullable=True,
     )
 
-    room: Mapped[Room] = relationship(back_populates="plants")
+    room: Mapped["Room"] = relationship(
+        back_populates="plants",
+    )

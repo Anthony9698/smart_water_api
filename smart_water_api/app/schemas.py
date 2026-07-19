@@ -31,3 +31,11 @@ class PlantResponse(BaseModel):
     moisture_entity_id: str | None
     pump_entity_id: str | None
     photo_url: str | None = None
+
+
+class MoistureSensorResponse(BaseModel):
+    entity_id: str
+    name: str
+    state: float | None
+    unit: str | None
+    available: bool

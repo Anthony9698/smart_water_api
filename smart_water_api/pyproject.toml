@@ -13,7 +13,8 @@ dependencies = [
     "sqlalchemy (>=2.0.51,<3.0.0)",
     "python-multipart (>=0.0.32,<0.0.33)",
     "pillow (>=12.3.0,<13.0.0)",
-    "pillow-heif (>=1.4.0,<2.0.0)"
+    "pillow-heif (>=1.4.0,<2.0.0)",
+    "httpx (>=0.28.1,<0.29.0)"
 ]
 
 [tool.poetry]

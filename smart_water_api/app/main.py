@@ -1,4 +1,5 @@
 import os
+import httpx
 
 from io import BytesIO
 from uuid import uuid4
@@ -16,8 +17,16 @@ from app.database import Base, engine, get_db
 from app.models import Plant, Room
 from app.schemas import RoomCreate, RoomResponse
 from app.schemas import PlantCreate, PlantResponse
+from app.schemas import MoistureSensorResponse
 
 from fastapi.responses import FileResponse
+
+HA_API_URL = os.getenv(
+    "HA_API_URL",
+    "http://supervisor/core/api",
+)
+
+HA_TOKEN = os.getenv("HA_TOKEN") or os.getenv("SUPERVISOR_TOKEN")
 
 Path("data").mkdir(exist_ok=True)
 Base.metadata.create_all(bind=engine)
@@ -299,3 +308,23 @@ def list_plants(
     plants = db.scalars(statement).all()
 
     return [plant_response(plant) for plant in plants]
+
+
+@app.get("/api/ha/moisture-sensors", response_model=list[MoistureSensorResponse])
+def list_moisture_sensors(db: Session = Depends(get_db)):
+    statement = select(
+        Plant.moisture_entity_id,
+        Plant.name,
+    ).where(Plant.moisture_entity_id.isnot(None))
+
+    plants = db.execute(statement).all()
+
+    return [
+        MoistureSensorResponse(
+            entity_id=plant.moisture_entity_id,
+            name=plant.name,
+            state=0,
+            unit="%",
+        )
+        for plant in plants
+    ]
