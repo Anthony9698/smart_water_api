@@ -1,4 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
+from datetime import datetime
 
 
 class RoomCreate(BaseModel):
@@ -55,6 +56,7 @@ class PlantResponse(BaseModel):
     moisture_entity_id: str | None
     pump_entity_id: str | None
     photo_url: str | None = None
+    last_watered_at: datetime | None
 
 
 class MoistureSensorResponse(BaseModel):

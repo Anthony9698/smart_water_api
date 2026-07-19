@@ -3,6 +3,7 @@ import httpx
 
 from io import BytesIO
 from uuid import uuid4
+from datetime import UTC, datetime
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pillow_heif import register_heif_opener
@@ -55,7 +56,7 @@ IMAGE_DIRECTORY.mkdir(
 MAX_IMAGE_SIZE = 8 * 1024 * 1024
 
 
-@app.get("/health")
+@app.get("/health", tags=["Health"])
 def health():
     return {"status": "ok"}
 
@@ -64,6 +65,7 @@ def health():
     "/api/rooms",
     response_model=RoomResponse,
     status_code=status.HTTP_201_CREATED,
+    tags=["Rooms"],
 )
 def create_room(
     payload: RoomCreate,
@@ -82,7 +84,7 @@ def create_room(
     )
 
 
-@app.get("/api/rooms", response_model=list[RoomResponse])
+@app.get("/api/rooms", response_model=list[RoomResponse], tags=["Rooms"])
 def list_rooms(db: Session = Depends(get_db)):
     statement = (
         select(
@@ -108,8 +110,7 @@ def list_rooms(db: Session = Depends(get_db)):
 
 
 @app.delete(
-    "/api/rooms/{room_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
+    "/api/rooms/{room_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Rooms"]
 )
 def delete_room(
     room_id: str,
@@ -141,6 +142,7 @@ def plant_response(plant: Plant) -> PlantResponse:
         moisture_entity_id=plant.moisture_entity_id,
         pump_entity_id=plant.pump_entity_id,
         photo_url=photo_url,
+        last_watered_at=plant.last_watered_at,
     )
 
 
@@ -148,6 +150,7 @@ def plant_response(plant: Plant) -> PlantResponse:
     "/api/plants",
     response_model=PlantResponse,
     status_code=status.HTTP_201_CREATED,
+    tags=["Plants"],
 )
 def create_plant(
     payload: PlantCreate,
@@ -185,6 +188,7 @@ def create_plant(
     "/api/plants/{plant_id}",
     response_model=PlantResponse,
     status_code=status.HTTP_200_OK,
+    tags=["Plants"],
 )
 def update_plant(
     plant_id: str,
@@ -247,10 +251,7 @@ def update_plant(
     return plant_response(plant)
 
 
-@app.put(
-    "/api/plants/{plant_id}/photo",
-    response_model=PlantResponse,
-)
+@app.put("/api/plants/{plant_id}/photo", response_model=PlantResponse, tags=["Plants"])
 async def update_plant_photo(
     plant_id: str,
     photo: UploadFile = File(...),
@@ -342,10 +343,7 @@ async def update_plant_photo(
     return plant_response(plant)
 
 
-@app.get(
-    "/api/plants/{plant_id}/photo",
-    response_class=FileResponse,
-)
+@app.get("/api/plants/{plant_id}/photo", response_class=FileResponse, tags=["Plants"])
 def get_plant_photo(
     plant_id: str,
     db: Session = Depends(get_db),
@@ -389,7 +387,7 @@ def get_plant_photo(
     )
 
 
-@app.get("/api/plants", response_model=list[PlantResponse])
+@app.get("/api/plants", response_model=list[PlantResponse], tags=["Plants"])
 def list_plants(
     room_id: str | None = None,
     db: Session = Depends(get_db),
@@ -407,6 +405,7 @@ def list_plants(
 @app.get(
     "/api/ha/moisture-sensors",
     response_model=list[MoistureSensorResponse],
+    tags=["Home Assistant"],
 )
 async def list_moisture_sensors():
     if not HA_TOKEN:
@@ -472,3 +471,26 @@ async def list_moisture_sensors():
         )
 
     return sensors
+
+
+@app.post(
+    "/api/plants/{plant_id}/watered", response_model=PlantResponse, tags=["Plants"]
+)
+def mark_plant_watered(
+    plant_id: str,
+    db: Session = Depends(get_db),
+):
+    plant = db.get(Plant, plant_id)
+
+    if not plant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Plant not found",
+        )
+
+    plant.last_watered_at = datetime.now(UTC)
+
+    db.commit()
+    db.refresh(plant)
+
+    return plant_response(plant)

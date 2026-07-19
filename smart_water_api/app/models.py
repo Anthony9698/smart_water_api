@@ -1,6 +1,7 @@
 from uuid import uuid4
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import ForeignKey, String, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -64,4 +65,9 @@ class Plant(Base):
 
     room: Mapped["Room"] = relationship(
         back_populates="plants",
+    )
+
+    last_watered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
