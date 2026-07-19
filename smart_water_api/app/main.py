@@ -56,6 +56,37 @@ IMAGE_DIRECTORY.mkdir(
 MAX_IMAGE_SIZE = 8 * 1024 * 1024
 
 
+def normalize_utc(
+    value: datetime | None,
+) -> datetime | None:
+    if value is None:
+        return None
+
+    # SQLite may remove timezone information when reading it.
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+
+    return value.astimezone(UTC).replace(microsecond=0)
+
+
+def plant_response(plant: Plant) -> PlantResponse:
+    photo_url = None
+
+    if plant.photo_filename:
+        photo_url = f"/api/plants/{plant.id}/photo"
+
+    return PlantResponse(
+        id=plant.id,
+        name=plant.name,
+        species=plant.species,
+        room_id=plant.room_id,
+        moisture_entity_id=plant.moisture_entity_id,
+        pump_entity_id=plant.pump_entity_id,
+        photo_url=photo_url,
+        last_watered_at=normalize_utc(plant.last_watered_at),
+    )
+
+
 @app.get("/health", tags=["Health"])
 def health():
     return {"status": "ok"}
@@ -126,24 +157,6 @@ def delete_room(
 
     db.delete(room)
     db.commit()
-
-
-def plant_response(plant: Plant) -> PlantResponse:
-    photo_url = None
-
-    if plant.photo_filename:
-        photo_url = f"/api/plants/{plant.id}/photo"
-
-    return PlantResponse(
-        id=plant.id,
-        name=plant.name,
-        species=plant.species,
-        room_id=plant.room_id,
-        moisture_entity_id=plant.moisture_entity_id,
-        pump_entity_id=plant.pump_entity_id,
-        photo_url=photo_url,
-        last_watered_at=plant.last_watered_at,
-    )
 
 
 @app.post(
@@ -488,7 +501,7 @@ def mark_plant_watered(
             detail="Plant not found",
         )
 
-    plant.last_watered_at = datetime.now(UTC)
+    plant.last_watered_at = datetime.now(UTC).replace(microsecond=0)
 
     db.commit()
     db.refresh(plant)
