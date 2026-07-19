@@ -1,5 +1,5 @@
 name: Smart Water API
-version: "0.7.0"
+version: "0.8.0"
 slug: smart_water_api
 description: Local API for managing Smart Water rooms, plants, and photos
 url: https://github.com/anthony9698/smart_water_api
