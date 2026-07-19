@@ -310,21 +310,71 @@ def list_plants(
     return [plant_response(plant) for plant in plants]
 
 
-@app.get("/api/ha/moisture-sensors", response_model=list[MoistureSensorResponse])
-def list_moisture_sensors(db: Session = Depends(get_db)):
-    statement = select(
-        Plant.moisture_entity_id,
-        Plant.name,
-    ).where(Plant.moisture_entity_id.isnot(None))
-
-    plants = db.execute(statement).all()
-
-    return [
-        MoistureSensorResponse(
-            entity_id=plant.moisture_entity_id,
-            name=plant.name,
-            state=0,
-            unit="%",
+@app.get(
+    "/api/ha/moisture-sensors",
+    response_model=list[MoistureSensorResponse],
+)
+async def list_moisture_sensors():
+    if not HA_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Home Assistant API token is unavailable",
         )
-        for plant in plants
-    ]
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(
+                f"{HA_API_URL}/states",
+                headers={
+                    "Authorization": f"Bearer {HA_TOKEN}",
+                    "Content-Type": "application/json",
+                },
+            )
+
+            response.raise_for_status()
+
+    except httpx.HTTPError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not retrieve sensors from Home Assistant",
+        ) from error
+
+    sensors = []
+
+    for entity in response.json():
+        entity_id = entity.get("entity_id", "")
+        attributes = entity.get("attributes", {})
+
+        if not entity_id.startswith("sensor."):
+            continue
+
+        if attributes.get("device_class") != "moisture":
+            continue
+
+        raw_state = entity.get("state")
+        available = raw_state not in {
+            None,
+            "unknown",
+            "unavailable",
+        }
+
+        try:
+            reading = float(raw_state) if available else None
+        except (TypeError, ValueError):
+            reading = None
+            available = False
+
+        sensors.append(
+            MoistureSensorResponse(
+                entity_id=entity_id,
+                name=attributes.get(
+                    "friendly_name",
+                    entity_id,
+                ),
+                state=reading,
+                unit=attributes.get("unit_of_measurement"),
+                available=available,
+            )
+        )
+
+    return sensors
