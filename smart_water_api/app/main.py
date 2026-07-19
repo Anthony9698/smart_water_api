@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.database import Base, engine, get_db
 from app.models import Plant, Room
 from app.schemas import RoomCreate, RoomResponse
-from app.schemas import PlantCreate, PlantResponse
+from app.schemas import PlantCreate, PlantUpdate, PlantResponse
 from app.schemas import MoistureSensorResponse
 
 from fastapi.responses import FileResponse
@@ -155,13 +155,90 @@ def create_plant(
 
     if not room:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="Room not found",
         )
+
+    if payload.moisture_entity_id:
+        existing_plant = db.scalar(
+            select(Plant).where(Plant.moisture_entity_id == payload.moisture_entity_id)
+        )
+
+        if existing_plant:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=("This moisture sensor is already assigned to another plant"),
+            )
 
     plant = Plant(**payload.model_dump())
 
     db.add(plant)
+    db.commit()
+    db.refresh(plant)
+
+    return plant_response(plant)
+
+
+@app.patch(
+    "/api/plants/{plant_id}",
+    response_model=PlantResponse,
+    status_code=status.HTTP_200_OK,
+)
+def update_plant(
+    plant_id: str,
+    payload: PlantUpdate,
+    db: Session = Depends(get_db),
+):
+    plant = db.get(Plant, plant_id)
+
+    if not plant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Plant not found",
+        )
+
+    updates = payload.model_dump(exclude_unset=True)
+
+    if "name" in updates and updates["name"] is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Plant name cannot be null",
+        )
+
+    if "room_id" in updates and updates["room_id"] is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Room ID cannot be null",
+        )
+
+    if "room_id" in updates:
+        room = db.get(Room, updates["room_id"])
+
+        if not room:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Room not found",
+            )
+
+    moisture_entity_id = updates.get("moisture_entity_id")
+
+    if moisture_entity_id is not None:
+        existing_plant = db.scalar(
+            select(Plant).where(
+                Plant.moisture_entity_id == moisture_entity_id,
+                Plant.id != plant_id,
+            )
+        )
+
+        if existing_plant:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=("This moisture sensor is already " "assigned to another plant"),
+            )
+
+    for field, value in updates.items():
+        setattr(plant, field, value)
+
     db.commit()
     db.refresh(plant)
 

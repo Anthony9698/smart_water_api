@@ -15,10 +15,34 @@ class RoomResponse(BaseModel):
 
 class PlantCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    species: str | None = None
+    species: str | None = Field(default=None, max_length=150)
     room_id: str
-    moisture_entity_id: str | None = None
-    pump_entity_id: str | None = None
+    moisture_entity_id: str | None = Field(
+        default=None,
+        max_length=255,
+    )
+    pump_entity_id: str | None = Field(
+        default=None,
+        max_length=255,
+    )
+
+
+class PlantUpdate(BaseModel):
+    name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+    )
+    species: str | None = Field(default=None, max_length=150)
+    room_id: str | None = None
+    moisture_entity_id: str | None = Field(
+        default=None,
+        max_length=255,
+    )
+    pump_entity_id: str | None = Field(
+        default=None,
+        max_length=255,
+    )
 
 
 class PlantResponse(BaseModel):
@@ -39,3 +63,5 @@ class MoistureSensorResponse(BaseModel):
     state: float | None
     unit: str | None
     available: bool
+    assigned_plant_id: str | None = None
+    assigned_plant_name: str | None = None
