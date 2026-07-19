@@ -4,6 +4,7 @@ WORKDIR /app
 
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+ENV POETRY_VIRTUALENVS_CREATE=false
 
 RUN apk add --no-cache \
     python3 \
@@ -11,7 +12,7 @@ RUN apk add --no-cache \
 
 RUN python3 -m venv "$VIRTUAL_ENV" \
     && pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir poetry
+    && pip install --no-cache-dir poetry==2.4.1
 
 COPY pyproject.toml poetry.lock ./
 

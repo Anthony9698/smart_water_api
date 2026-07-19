@@ -21,6 +21,9 @@ from app.schemas import MoistureSensorResponse
 
 from fastapi.responses import FileResponse
 
+MAX_IMAGE_SIZE = 8 * 1024 * 1024
+MAX_IMAGE_PIXELS = 25_000_000
+
 HA_API_URL = os.getenv(
     "HA_API_URL",
     "http://supervisor/core/api",
@@ -28,7 +31,6 @@ HA_API_URL = os.getenv(
 
 HA_TOKEN = os.getenv("HA_TOKEN") or os.getenv("SUPERVISOR_TOKEN")
 
-Path("data").mkdir(exist_ok=True)
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -288,10 +290,22 @@ async def update_plant_photo(
 
     try:
         with Image.open(BytesIO(contents)) as source:
-            image = ImageOps.exif_transpose(source)
-            image = image.convert("RGB")
+            pixel_count = source.width * source.height
 
+            if pixel_count > MAX_IMAGE_PIXELS:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="Photo dimensions are too large",
+                )
+
+            # Reduces memory usage for JPEG images.
+            source.draft("RGB", (1600, 1600))
+
+            image = ImageOps.exif_transpose(source)
             image.thumbnail((1600, 1600))
+
+            if image.mode != "RGB":
+                image = image.convert("RGB")
 
             image.save(
                 new_path,
@@ -299,6 +313,9 @@ async def update_plant_photo(
                 quality=85,
                 optimize=True,
             )
+    except HTTPException:
+        new_path.unlink(missing_ok=True)
+        raise
     except (UnidentifiedImageError, OSError, ValueError) as error:
         new_path.unlink(missing_ok=True)
 
