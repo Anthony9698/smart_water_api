@@ -45,3 +45,14 @@ class PlantResponse(BaseModel):
     pump_entity_id: str | None
     photo_url: str | None = None
     last_watered_at: datetime | None
+
+
+class PumpSwitchStateUpdate(BaseModel):
+    is_on: bool
+
+
+class PumpSwitchStateResponse(BaseModel):
+    plant_id: str
+    entity_id: str
+    is_on: bool
+    last_watered_at: datetime | None

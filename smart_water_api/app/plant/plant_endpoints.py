@@ -1,4 +1,5 @@
 import os
+import httpx
 
 from io import BytesIO
 from uuid import uuid4
@@ -16,9 +17,16 @@ from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
 from app.models import Plant, Room
-from app.plant.plant_schemas import PlantCreate, PlantUpdate, PlantResponse
+from app.plant.plant_schemas import (
+    PlantCreate,
+    PlantUpdate,
+    PlantResponse,
+    PumpSwitchStateResponse,
+    PumpSwitchStateUpdate,
+)
 
 from fastapi.responses import FileResponse
+from app.ha.ha_endpoints import HA_API_URL
 
 router = APIRouter(
     prefix="/api/plants",
@@ -424,3 +432,71 @@ async def update_plant_photo(
         old_path.unlink(missing_ok=True)
 
     return plant_response(plant)
+
+
+@router.put(
+    "/{plant_id}/pump",
+    response_model=PumpSwitchStateResponse,
+)
+async def set_plant_pump_state(
+    plant_id: str,
+    payload: PumpSwitchStateUpdate,
+    db: Session = Depends(get_db),
+):
+    plant = db.get(Plant, plant_id)
+
+    if not plant:
+        raise HTTPException(
+            status_code=404,
+            detail="Plant not found",
+        )
+
+    if not plant.pump_entity_id:
+        raise HTTPException(
+            status_code=409,
+            detail="This plant does not have a pump assigned",
+        )
+
+    token = os.getenv("HA_TOKEN") or os.getenv("SUPERVISOR_TOKEN")
+
+    if not token:
+        raise HTTPException(
+            status_code=503,
+            detail="Home Assistant API token is unavailable",
+        )
+
+    service = "turn_on" if payload.is_on else "turn_off"
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                f"{HA_API_URL}/services/switch/{service}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "entity_id": plant.pump_entity_id,
+                },
+            )
+
+            response.raise_for_status()
+
+    except httpx.HTTPError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Home Assistant could not {service} the pump",
+        ) from error
+
+    if payload.is_on:
+        plant.last_watered_at = datetime.now(UTC).replace(microsecond=0)
+
+        db.commit()
+        db.refresh(plant)
+
+    return PumpSwitchStateResponse(
+        plant_id=plant.id,
+        entity_id=plant.pump_entity_id,
+        is_on=payload.is_on,
+        last_watered_at=plant.last_watered_at,
+    )
