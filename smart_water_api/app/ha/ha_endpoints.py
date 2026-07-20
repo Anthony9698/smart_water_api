@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from fastapi import APIRouter, HTTPException, status, Depends
-from app.ha.ha_schemas import MoistureSensorResponse
+from app.ha.ha_schemas import MoistureSensorResponse, PumpSwitchResponse
 from app.database import get_db
 from app.models import Plant
 
@@ -127,3 +127,100 @@ async def list_moisture_sensors(
     sensors.sort(key=lambda sensor: sensor.name.lower())
 
     return sensors
+
+
+@router.get(
+    "/pump-switches",
+    response_model=list[PumpSwitchResponse],
+)
+async def list_pump_switches(
+    unassigned_only: bool = False,
+    plant_id: str | None = None,
+    db: Session = Depends(get_db),
+):
+    if not HA_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Home Assistant API token is unavailable",
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(
+                f"{HA_API_URL}/states",
+                headers={
+                    "Authorization": f"Bearer {HA_TOKEN}",
+                    "Content-Type": "application/json",
+                },
+            )
+
+            response.raise_for_status()
+
+    except httpx.HTTPError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not retrieve pump switches from Home Assistant",
+        ) from error
+
+    assignment_rows = db.execute(
+        select(
+            Plant.pump_entity_id,
+            Plant.id,
+            Plant.name,
+        ).where(Plant.pump_entity_id.isnot(None))
+    ).all()
+
+    assignments = {
+        row.pump_entity_id: {
+            "plant_id": row.id,
+            "plant_name": row.name,
+        }
+        for row in assignment_rows
+    }
+
+    pump_switches = []
+
+    for entity in response.json():
+        entity_id = entity.get("entity_id", "")
+        domain = entity_id.partition(".")[0]
+
+        if domain not in {"switch", "valve"} and "pump" not in entity_id:
+            continue
+
+        raw_state = entity.get("state")
+        attributes = entity.get("attributes", {})
+
+        available = raw_state not in {
+            None,
+            "unknown",
+            "unavailable",
+        }
+
+        assignment = assignments.get(entity_id)
+
+        if unassigned_only:
+            assigned_to_different_plant = (
+                assignment is not None and assignment["plant_id"] != plant_id
+            )
+
+            if assigned_to_different_plant:
+                continue
+
+        pump_switches.append(
+            PumpSwitchResponse(
+                entity_id=entity_id,
+                name=attributes.get(
+                    "friendly_name",
+                    entity_id,
+                ),
+                domain=domain,
+                state=raw_state if available else None,
+                available=available,
+                assigned_plant_id=(assignment["plant_id"] if assignment else None),
+                assigned_plant_name=(assignment["plant_name"] if assignment else None),
+            )
+        )
+
+    pump_switches.sort(key=lambda pump_switch: pump_switch.name.lower())
+
+    return pump_switches

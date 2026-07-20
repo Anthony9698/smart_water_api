@@ -73,7 +73,13 @@ def commit_plant_changes(
         if "plants.moisture_entity_id" in error_message:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=("This moisture sensor is already " "assigned to another plant"),
+                detail=("This moisture sensor is already assigned to another plant"),
+            ) from error
+
+        if "plants.pump_entity_id" in error_message:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=("This pump switch is already assigned to another plant"),
             ) from error
 
         raise
@@ -196,6 +202,17 @@ def create_plant(
                 detail=("This moisture sensor is already assigned to another plant"),
             )
 
+    if payload.pump_entity_id is not None:
+        existing_plant = db.scalar(
+            select(Plant).where(Plant.pump_entity_id == payload.pump_entity_id)
+        )
+
+        if existing_plant:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=("This pump switch is already assigned to another plant"),
+            )
+
     plant = Plant(**payload.model_dump())
 
     db.add(plant)
@@ -287,6 +304,22 @@ def update_plant(
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=("This moisture sensor is already " "assigned to another plant"),
+            )
+
+    pump_entity_id = updates.get("pump_entity_id")
+
+    if pump_entity_id is not None:
+        existing_plant = db.scalar(
+            select(Plant).where(
+                Plant.pump_entity_id == pump_entity_id,
+                Plant.id != plant_id,
+            )
+        )
+
+        if existing_plant:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=("This pump switch is already " "assigned to another plant"),
             )
 
     for field, value in updates.items():
