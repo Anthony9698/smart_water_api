@@ -184,7 +184,7 @@ async def list_pump_switches(
         entity_id = entity.get("entity_id", "")
         domain = entity_id.partition(".")[0]
 
-        if domain not in {"switch", "valve"} and "pump" not in entity_id:
+        if domain not in {"switch", "valve"} or "pump" not in entity_id:
             continue
 
         raw_state = entity.get("state")
