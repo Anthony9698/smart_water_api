@@ -1,7 +1,7 @@
 from uuid import uuid4
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, String, DateTime
+from sqlalchemy import ForeignKey, String, DateTime, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -29,6 +29,14 @@ class Room(Base):
 
 class Plant(Base):
     __tablename__ = "plants"
+
+    __table_args__ = (
+        Index(
+            "uq_plants_moisture_entity_id",
+            "moisture_entity_id",
+            unique=True,
+        ),
+    )
 
     id: Mapped[str] = mapped_column(
         String,

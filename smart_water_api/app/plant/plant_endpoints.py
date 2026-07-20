@@ -12,6 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
 from app.models import Plant, Room
@@ -57,6 +58,25 @@ def normalize_utc(
         value = value.replace(tzinfo=UTC)
 
     return value.astimezone(UTC).replace(microsecond=0)
+
+
+def commit_plant_changes(
+    db: Session,
+) -> None:
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+
+        error_message = str(error.orig)
+
+        if "plants.moisture_entity_id" in error_message:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=("This moisture sensor is already " "assigned to another plant"),
+            ) from error
+
+        raise
 
 
 # =============================================================================
@@ -165,7 +185,7 @@ def create_plant(
             detail="Room not found",
         )
 
-    if payload.moisture_entity_id:
+    if payload.moisture_entity_id is not None:
         existing_plant = db.scalar(
             select(Plant).where(Plant.moisture_entity_id == payload.moisture_entity_id)
         )
@@ -179,7 +199,7 @@ def create_plant(
     plant = Plant(**payload.model_dump())
 
     db.add(plant)
-    db.commit()
+    commit_plant_changes(db)
     db.refresh(plant)
 
     return plant_response(plant)
@@ -272,7 +292,7 @@ def update_plant(
     for field, value in updates.items():
         setattr(plant, field, value)
 
-    db.commit()
+    commit_plant_changes(db)
     db.refresh(plant)
 
     return plant_response(plant)

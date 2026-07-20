@@ -1,5 +1,11 @@
 name: Smart Water API
+<<<<<<< Updated upstream
 version: "0.9.2"
+=======
+# Managed automatically by .github/workflows/publish.yaml.
+# Do not update this version manually.
+version: "0.9.1"
+>>>>>>> Stashed changes
 slug: smart_water_api
 description: Local API for managing Smart Water rooms, plants, and photos
 url: https://github.com/anthony9698/smart_water_api

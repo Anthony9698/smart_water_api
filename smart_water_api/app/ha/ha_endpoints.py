@@ -1,8 +1,13 @@
 import os
 import httpx
 
-from fastapi import APIRouter, HTTPException, status
+from sqlalchemy.orm import Session
+from sqlalchemy import select
+
+from fastapi import APIRouter, HTTPException, status, Depends
 from app.ha.ha_schemas import MoistureSensorResponse
+from app.database import get_db
+from app.models import Plant
 
 router = APIRouter(
     prefix="/api/ha",
@@ -24,7 +29,11 @@ HA_TOKEN = os.getenv("HA_TOKEN") or os.getenv("SUPERVISOR_TOKEN")
     "/moisture-sensors",
     response_model=list[MoistureSensorResponse],
 )
-async def list_moisture_sensors():
+async def list_moisture_sensors(
+    unassigned_only: bool = False,
+    plant_id: str | None = None,
+    db: Session = Depends(get_db),
+):
     if not HA_TOKEN:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -49,6 +58,21 @@ async def list_moisture_sensors():
             detail="Could not retrieve sensors from Home Assistant",
         ) from error
 
+    assignment_rows = db.execute(
+        select(
+            Plant.moisture_entity_id,
+            Plant.id,
+            Plant.name,
+        ).where(Plant.moisture_entity_id.isnot(None))
+    ).all()
+
+    assignments = {
+        row.moisture_entity_id: {
+            "plant_id": row.id,
+            "plant_name": row.name,
+        }
+        for row in assignment_rows
+    }
     sensors = []
 
     for entity in response.json():
@@ -62,6 +86,7 @@ async def list_moisture_sensors():
             continue
 
         raw_state = entity.get("state")
+
         available = raw_state not in {
             None,
             "unknown",
@@ -74,6 +99,16 @@ async def list_moisture_sensors():
             reading = None
             available = False
 
+        assignment = assignments.get(entity_id)
+
+        if unassigned_only:
+            assigned_to_different_plant = (
+                assignment is not None and assignment["plant_id"] != plant_id
+            )
+
+            if assigned_to_different_plant:
+                continue
+
         sensors.append(
             MoistureSensorResponse(
                 entity_id=entity_id,
@@ -84,7 +119,11 @@ async def list_moisture_sensors():
                 state=reading,
                 unit=attributes.get("unit_of_measurement"),
                 available=available,
+                assigned_plant_id=(assignment["plant_id"] if assignment else None),
+                assigned_plant_name=(assignment["plant_name"] if assignment else None),
             )
         )
+
+    sensors.sort(key=lambda sensor: sensor.name.lower())
 
     return sensors
