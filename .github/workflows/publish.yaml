@@ -1,0 +1,243 @@
+name: Publish Smart Water API
+
+concurrency:
+  group: smart-water-api-release
+  cancel-in-progress: true
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "smart_water_api/**"
+      - ".github/workflows/publish.yaml"
+
+env:
+  ARCHITECTURES: '["amd64", "aarch64"]'
+  IMAGE_NAME: smart-water-api
+
+permissions:
+  contents: read
+
+jobs:
+  initialize:
+    name: Initialize build
+    runs-on: ubuntu-latest
+
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      version: ${{ steps.version.outputs.version }}
+      source_sha: ${{ steps.source.outputs.sha }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Record source commit
+        id: source
+        shell: bash
+        run: |
+          echo "sha=${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Calculate next version
+        id: version
+        shell: bash
+        run: |
+          python3 <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          config_path = Path("smart_water_api/config.yaml")
+          contents = config_path.read_text()
+
+          match = re.search(
+              r'^version:\s*["\']?(\d+)\.(\d+)\.(\d+)["\']?\s*$',
+              contents,
+              re.MULTILINE,
+          )
+
+          if not match:
+              raise SystemExit(
+                  "Could not find a semantic version in config.yaml"
+              )
+
+          major, minor, patch = map(int, match.groups())
+          next_version = f"{major}.{minor}.{patch + 1}"
+
+          print(f"Current version: {major}.{minor}.{patch}")
+          print(f"Next version: {next_version}")
+
+          with open(
+              os.environ["GITHUB_OUTPUT"],
+              "a",
+              encoding="utf-8",
+          ) as output:
+              output.write(f"version={next_version}\n")
+          PY
+
+      - name: Prepare build matrix
+        id: matrix
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@2026.06.0
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: ${{ env.IMAGE_NAME }}
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: initialize
+    runs-on: ${{ matrix.os }}
+
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.initialize.outputs.matrix) }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.initialize.outputs.source_sha }}
+
+      - name: Build and publish image
+        uses: home-assistant/builder/actions/build-image@2026.06.0
+        with:
+          arch: ${{ matrix.arch }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          context: ./smart_water_api
+          image: ${{ matrix.image }}
+          image-tags: |
+            ${{ needs.initialize.outputs.version }}
+            latest
+          version: ${{ needs.initialize.outputs.version }}
+          build-args: |
+            BUILD_COMMIT=${{ needs.initialize.outputs.source_sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.initialize.outputs.source_sha }}
+          push: "true"
+
+  manifest:
+    name: Publish multi-architecture image
+    needs:
+      - initialize
+      - build
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      packages: write
+
+    steps:
+      - name: Publish multi-architecture manifest
+        uses: home-assistant/builder/actions/publish-multi-arch-manifest@2026.06.0
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          image-name: ${{ env.IMAGE_NAME }}
+          image-tags: |
+            ${{ needs.initialize.outputs.version }}
+            latest
+
+  finalize:
+    name: Finalize release
+    needs:
+      - initialize
+      - manifest
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Verify main has not changed
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.initialize.outputs.source_sha }}
+        run: |
+          git fetch origin main
+
+          CURRENT_SHA="$(git rev-parse origin/main)"
+
+          if [[ "${CURRENT_SHA}" != "${SOURCE_SHA}" ]]; then
+            echo "The main branch changed during the build."
+            echo "Built commit: ${SOURCE_SHA}"
+            echo "Current main: ${CURRENT_SHA}"
+            echo "A newer workflow should publish the latest commit."
+            exit 1
+          fi
+
+      - name: Update config version
+        shell: bash
+        env:
+          VERSION: ${{ needs.initialize.outputs.version }}
+        run: |
+          python3 <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          config_path = Path("smart_water_api/config.yaml")
+          contents = config_path.read_text()
+
+          version = os.environ["VERSION"]
+
+          updated_contents, replacements = re.subn(
+              r'^version:\s*["\']?\d+\.\d+\.\d+["\']?\s*$',
+              f'version: "{version}"',
+              contents,
+              count=1,
+              flags=re.MULTILINE,
+          )
+
+          if replacements != 1:
+              raise SystemExit(
+                  "Could not update version in config.yaml"
+              )
+
+          config_path.write_text(updated_contents)
+          print(f"Updated config.yaml to {version}")
+          PY
+
+      - name: Commit version
+        shell: bash
+        env:
+          VERSION: ${{ needs.initialize.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add smart_water_api/config.yaml
+
+          git commit \
+            -m "chore: release ${VERSION} [skip ci]"
+
+          git push origin HEAD:main
+
+      - name: Create tag and GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.initialize.outputs.version }}
+        run: |
+          git tag \
+            -a "${VERSION}" \
+            -m "Smart Water API ${VERSION}"
+
+          git push origin "${VERSION}"
+
+          gh release create "${VERSION}" \
+            --title "Smart Water API ${VERSION}" \
+            --generate-notes

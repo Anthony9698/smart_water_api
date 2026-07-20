@@ -1,5 +1,11 @@
 FROM ghcr.io/home-assistant/base:latest
 
+ARG BUILD_VERSION="development"
+ARG BUILD_COMMIT="unknown"
+
+ENV SMART_WATER_VERSION="${BUILD_VERSION}"
+ENV SMART_WATER_COMMIT="${BUILD_COMMIT}"
+
 WORKDIR /app
 
 ENV VIRTUAL_ENV=/opt/venv
