@@ -15,6 +15,8 @@ on:
 env:
   ARCHITECTURES: '["amd64", "aarch64"]'
   IMAGE_NAME: smart-water-api
+  REGISTRY_PREFIX: ghcr.io/anthony9698
+  REGISTRY_USERNAME: anthony9698
 
 permissions:
   contents: read
@@ -82,6 +84,7 @@ jobs:
         with:
           architectures: ${{ env.ARCHITECTURES }}
           image-name: ${{ env.IMAGE_NAME }}
+          registry-prefix: ${{ env.REGISTRY_PREFIX }}
 
   build:
     name: Build ${{ matrix.arch }}
@@ -107,6 +110,7 @@ jobs:
         uses: home-assistant/builder/actions/build-image@2026.06.0
         with:
           arch: ${{ matrix.arch }}
+          container-registry-username: ${{ env.REGISTRY_USERNAME }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
           context: ./smart_water_api
           image: ${{ matrix.image }}
@@ -137,7 +141,9 @@ jobs:
         uses: home-assistant/builder/actions/publish-multi-arch-manifest@2026.06.0
         with:
           architectures: ${{ env.ARCHITECTURES }}
+          container-registry-username: ${{ env.REGISTRY_USERNAME }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          registry-prefix: ${{ env.REGISTRY_PREFIX }}
           image-name: ${{ env.IMAGE_NAME }}
           image-tags: |
             ${{ needs.initialize.outputs.version }}
