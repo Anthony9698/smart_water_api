@@ -21,8 +21,7 @@ from app.plant.plant_schemas import (
     PlantCreate,
     PlantUpdate,
     PlantResponse,
-    PumpSwitchStateResponse,
-    PumpSwitchStateUpdate,
+    WaterPlantRequest,
 )
 
 from fastapi.responses import FileResponse
@@ -31,6 +30,11 @@ from app.ha.ha_endpoints import HA_API_URL
 router = APIRouter(
     prefix="/api/plants",
     tags=["Plants"],
+)
+
+HA_WATER_SCRIPT = os.getenv(
+    "HA_WATER_SCRIPT",
+    "script.smart_water_pump_cycle",
 )
 
 MAX_IMAGE_SIZE = 8 * 1024 * 1024
@@ -91,6 +95,18 @@ def commit_plant_changes(
             ) from error
 
         raise
+
+
+def get_ha_token() -> str:
+    token = os.getenv("HA_TOKEN") or os.getenv("SUPERVISOR_TOKEN")
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Home Assistant API token is unavailable",
+        )
+
+    return token
 
 
 # =============================================================================
@@ -231,11 +247,13 @@ def create_plant(
 
 
 @router.post(
-    "/{plant_id}/watered",
+    "/{plant_id}/water",
     response_model=PlantResponse,
+    status_code=status.HTTP_200_OK,
 )
-def mark_plant_watered(
+async def water_plant(
     plant_id: str,
+    payload: WaterPlantRequest,
     db: Session = Depends(get_db),
 ):
     plant = db.get(Plant, plant_id)
@@ -246,10 +264,68 @@ def mark_plant_watered(
             detail="Plant not found",
         )
 
+    if not plant.pump_entity_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This plant does not have a pump assigned",
+        )
+
+    if not plant.pump_entity_id.startswith("switch."):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="The assigned pump must be a Home Assistant switch",
+        )
+
+    token = get_ha_token()
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                f"{HA_API_URL}/services/script/turn_on",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "entity_id": HA_WATER_SCRIPT,
+                    "variables": {
+                        "pump_entity_id": plant.pump_entity_id,
+                        "duration_seconds": (payload.duration_seconds),
+                    },
+                },
+            )
+
+            response.raise_for_status()
+
+    except httpx.TimeoutException as error:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Home Assistant did not respond in time",
+        ) from error
+
+    except httpx.HTTPStatusError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "Home Assistant rejected the watering request "
+                f"with status {error.response.status_code}"
+            ),
+        ) from error
+
+    except httpx.RequestError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not connect to Home Assistant",
+        ) from error
+
     plant.last_watered_at = datetime.now(UTC).replace(microsecond=0)
 
-    db.commit()
-    db.refresh(plant)
+    try:
+        db.commit()
+        db.refresh(plant)
+    except Exception:
+        db.rollback()
+        raise
 
     return plant_response(plant)
 
@@ -311,7 +387,7 @@ def update_plant(
         if existing_plant:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=("This moisture sensor is already " "assigned to another plant"),
+                detail=("This moisture sensor is already assigned to another plant"),
             )
 
     pump_entity_id = updates.get("pump_entity_id")
@@ -432,71 +508,3 @@ async def update_plant_photo(
         old_path.unlink(missing_ok=True)
 
     return plant_response(plant)
-
-
-@router.put(
-    "/{plant_id}/pump",
-    response_model=PumpSwitchStateResponse,
-)
-async def set_plant_pump_state(
-    plant_id: str,
-    payload: PumpSwitchStateUpdate,
-    db: Session = Depends(get_db),
-):
-    plant = db.get(Plant, plant_id)
-
-    if not plant:
-        raise HTTPException(
-            status_code=404,
-            detail="Plant not found",
-        )
-
-    if not plant.pump_entity_id:
-        raise HTTPException(
-            status_code=409,
-            detail="This plant does not have a pump assigned",
-        )
-
-    token = os.getenv("HA_TOKEN") or os.getenv("SUPERVISOR_TOKEN")
-
-    if not token:
-        raise HTTPException(
-            status_code=503,
-            detail="Home Assistant API token is unavailable",
-        )
-
-    service = "turn_on" if payload.is_on else "turn_off"
-
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(
-                f"{HA_API_URL}/services/switch/{service}",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "entity_id": plant.pump_entity_id,
-                },
-            )
-
-            response.raise_for_status()
-
-    except httpx.HTTPError as error:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Home Assistant could not {service} the pump",
-        ) from error
-
-    if payload.is_on:
-        plant.last_watered_at = datetime.now(UTC).replace(microsecond=0)
-
-        db.commit()
-        db.refresh(plant)
-
-    return PumpSwitchStateResponse(
-        plant_id=plant.id,
-        entity_id=plant.pump_entity_id,
-        is_on=payload.is_on,
-        last_watered_at=plant.last_watered_at,
-    )

@@ -47,12 +47,9 @@ class PlantResponse(BaseModel):
     last_watered_at: datetime | None
 
 
-class PumpSwitchStateUpdate(BaseModel):
-    is_on: bool
-
-
-class PumpSwitchStateResponse(BaseModel):
-    plant_id: str
-    entity_id: str
-    is_on: bool
-    last_watered_at: datetime | None
+class WaterPlantRequest(BaseModel):
+    duration_seconds: int = Field(
+        default=10,
+        ge=1,
+        le=60,
+    )
